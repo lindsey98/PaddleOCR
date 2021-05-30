@@ -33,8 +33,10 @@ from ppocr.data import create_operators, transform
 from ppocr.modeling.architectures import build_model
 from ppocr.postprocess import build_post_process
 from ppocr.utils.save_load import init_model
+from ppocr.utils.logging import get_logger
 from ppocr.utils.utility import get_image_file_list
 import tools.program as program
+import yaml
 
 
 def main():
@@ -70,6 +72,7 @@ def main():
             else:
                 op[op_name]['keep_keys'] = ['image']
         transforms.append(op)
+
     global_config['infer_mode'] = True
     ops = create_operators(transforms, global_config)
 
@@ -107,14 +110,92 @@ def main():
             else:
                 preds = model(images)
             post_result = post_process_class(preds)
+            print(rec_reuslt)
             for rec_reuslt in post_result:
                 logger.info('\t result: {}'.format(rec_reuslt))
                 if len(rec_reuslt) >= 2:
                     fout.write(file + "\t" + rec_reuslt[0] + "\t" + str(
                         rec_reuslt[1]) + "\n")
     logger.info("success!")
+#
+#
+
+
+def initialize_model():
+    '''
+    Break the main process into segments
+    CRNN text recognition model initialization
+    :return:
+    '''
+    with open('configs/rec/rec_r34_vd_none_bilstm_ctc.yml', 'r') as f:
+        config = yaml.safe_load(f)
+    print(config)
+    logger = get_logger()
+
+    global_config = config['Global']
+
+    # build post process
+    post_process_class = build_post_process(config['PostProcess'], global_config)
+
+    # build model
+    if hasattr(post_process_class, 'character'):
+        config['Architecture']["Head"]['out_channels'] = len(
+            getattr(post_process_class, 'character'))
+
+    model = build_model(config['Architecture'])
+
+    init_model(config, model, logger)
+
+    # create data ops
+    transforms = []
+    for op in config['Eval']['dataset']['transforms']:
+        op_name = list(op)[0]
+        if 'Label' in op_name:
+            continue
+        elif op_name in ['RecResizeImg']: # resize image
+            op[op_name]['infer_mode'] = True
+        elif op_name == 'KeepKeys':
+            if config['Architecture']['algorithm'] == "SRN": # if use SRN-based
+                op[op_name]['keep_keys'] = [
+                    'image', 'encoder_word_pos', 'gsrm_word_pos',
+                    'gsrm_slf_attn_bias1', 'gsrm_slf_attn_bias2'
+                ]
+            else:
+                op[op_name]['keep_keys'] = ['image']
+        transforms.append(op)
+
+    global_config['infer_mode'] = True
+    ops = create_operators(transforms, global_config)
+
+    # set as eval mode
+    model.eval()
+    return model, ops, post_process_class
+
+def infer_img(file:str, model, ops, post_process_class):
+
+    print("infer_img: {}".format(file))
+    with open(file, 'rb') as f:
+        img = f.read()
+        data = {'image': img}
+
+    batch = transform(data, ops)
+
+    images = np.expand_dims(batch[0], axis=0)
+    images = paddle.to_tensor(images)
+    preds = model(images)
+
+    post_result = post_process_class(preds)
+
+    for rec_reuslt in post_result:
+        print('\t result: {}'.format(rec_reuslt))
+
+    print("success!")
 
 
 if __name__ == '__main__':
-    config, device, logger, vdl_writer = program.preprocess()
-    main()
+    # config, device, logger, vdl_writer = program.preprocess()
+    # main()
+    model, ops, post_process_class = initialize_model()
+    infer_img(file='./doc/imgs_words_en/word_10.png', model=model, ops=ops, post_process_class=post_process_class)
+
+

@@ -34,7 +34,6 @@ from ppocr.utils.utility import get_image_file_list, check_and_read_gif
 
 logger = get_logger()
 
-
 class TextRecognizer(object):
     def __init__(self, args):
         self.rec_image_shape = [int(v) for v in args.rec_image_shape.split(",")]
@@ -254,6 +253,7 @@ def main(args):
     total_images_num = 0
     valid_image_file_list = []
     img_list = []
+
     for idx, image_file in enumerate(image_file_list):
         img, flag = check_and_read_gif(image_file)
         if not flag:
