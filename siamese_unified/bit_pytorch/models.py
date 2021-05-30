@@ -110,10 +110,10 @@ class PreActBottleneck(nn.Module):
 class ResNetV2(nn.Module):
     """Implementation of Pre-activation (v2) ResNet mode."""
 
-    def __init__(self, block_units, width_factor, head_size=21843, zero_head=False):
+    def __init__(self, block_units, width_factor, head_size=21843, zero_head=False, ocr_emb_size=925):
         super().__init__()
-        wf = width_factor    # shortcut 'cause we'll use it a lot.
-
+        wf = width_factor
+        self.wf = wf
         # The following will be unreadable if we split lines.
         # pylint: disable=line-too-long
         self.root = nn.Sequential(OrderedDict([
@@ -149,16 +149,23 @@ class ResNetV2(nn.Module):
                 ('gn', nn.GroupNorm(32, 2048*wf)),
                 ('relu', nn.ReLU(inplace=True)),
                 ('avg', nn.AdaptiveAvgPool2d(output_size=1)),
-                ('conv', nn.Conv2d(2048*wf, head_size, kernel_size=1, bias=True)),
+        ]))
+
+        self.additionalfc = nn.Sequential(OrderedDict([
+                ('conv_add', nn.Linear(2048*wf+ocr_emb_size, head_size)),
         ]))
 
     def features(self, x):
         x = self.head[:-1](self.body(self.root(x)))
-
         return x.squeeze()
 
-    def forward(self, x):
+    def forward(self, x, ocr_emb):
         x = self.head(self.body(self.root(x)))
+        x = x.view(-1, 2048*self.wf)
+        print(x.shape)
+        x = torch.cat((x, ocr_emb), dim=1)
+        print(x.shape)
+        x = self.additionalfc(x)
         assert x.shape[-2:] == (1, 1)    # We should have no spatial shape left.
         return x[...,0,0]
 
@@ -167,12 +174,12 @@ class ResNetV2(nn.Module):
             self.root.conv.weight.copy_(tf2th(weights[f'{prefix}root_block/standardized_conv2d/kernel']))    # pylint: disable=line-too-long
             self.head.gn.weight.copy_(tf2th(weights[f'{prefix}group_norm/gamma']))
             self.head.gn.bias.copy_(tf2th(weights[f'{prefix}group_norm/beta']))
-            if self.zero_head:
-                nn.init.zeros_(self.head.conv.weight)
-                nn.init.zeros_(self.head.conv.bias)
-            else:
-                self.head.conv.weight.copy_(tf2th(weights[f'{prefix}head/conv2d/kernel']))    # pylint: disable=line-too-long
-                self.head.conv.bias.copy_(tf2th(weights[f'{prefix}head/conv2d/bias']))
+            # if self.zero_head:
+            #     nn.init.zeros_(self.head.conv.weight)
+            #     nn.init.zeros_(self.head.conv.bias)
+            # else:
+            #     self.head.conv.weight.copy_(tf2th(weights[f'{prefix}head/conv2d/kernel']))    # pylint: disable=line-too-long
+            #     self.head.conv.bias.copy_(tf2th(weights[f'{prefix}head/conv2d/bias']))
 
             for bname, block in self.body.named_children():
                 for uname, unit in block.named_children():

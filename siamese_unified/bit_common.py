@@ -20,7 +20,7 @@ import logging
 import logging.config
 import os
 
-import bit_hyperrule
+import siamese_unified.bit_hyperrule as bit_hyperrule
 
 
 def argparser(known_models):

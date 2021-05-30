@@ -52,3 +52,7 @@ class CTCHead(nn.Layer):
         if not self.training:
             predicts = F.softmax(predicts, axis=2)
         return predicts
+
+    def forward_emb(self, x, labels=None):
+        predicts = self.fc(x)
+        return predicts

@@ -37,7 +37,7 @@ from ppocr.utils.logging import get_logger
 from ppocr.utils.utility import get_image_file_list
 import tools.program as program
 import yaml
-
+import torch
 
 def main():
     global_config = config['Global']
@@ -173,7 +173,7 @@ def initialize_model():
 
 def infer_img(file:str, model, ops, post_process_class):
 
-    print("infer_img: {}".format(file))
+    # print("infer_img: {}".format(file))
     with open(file, 'rb') as f:
         img = f.read()
         data = {'image': img}
@@ -183,19 +183,23 @@ def infer_img(file:str, model, ops, post_process_class):
     images = np.expand_dims(batch[0], axis=0)
     images = paddle.to_tensor(images)
     preds = model(images)
+    preds_emb = model.forward_emb(images)
+    preds_emb = paddle.fluid.layers.nn.flatten(preds_emb).numpy()
+    # print('Predicted embedding has shape', preds_emb.shape)
 
     post_result = post_process_class(preds)
+    #
+    # for rec_reuslt in post_result:
+    #     print('\t result: {}'.format(rec_reuslt))
 
-    for rec_reuslt in post_result:
-        print('\t result: {}'.format(rec_reuslt))
-
-    print("success!")
+    # print("success!")
+    return preds_emb, post_result
 
 
 if __name__ == '__main__':
     # config, device, logger, vdl_writer = program.preprocess()
     # main()
     model, ops, post_process_class = initialize_model()
-    infer_img(file='./doc/imgs_words_en/word_10.png', model=model, ops=ops, post_process_class=post_process_class)
+    infer_img(file='./doc/imgs_words_en/word_52.png', model=model, ops=ops, post_process_class=post_process_class)
 
 

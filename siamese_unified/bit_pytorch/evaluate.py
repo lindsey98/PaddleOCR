@@ -1,8 +1,8 @@
 
 import torch
 import numpy as np
-import bit_pytorch.models as models
-from bit_pytorch.dataloader import GetLoader
+import siamese_unified.bit_pytorch.models as models
+from siamese_unified.bit_pytorch.dataloader import GetLoader
 import torch.nn.functional as F
 import os
 import cv2

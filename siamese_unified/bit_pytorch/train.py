@@ -23,17 +23,20 @@ import numpy as np
 import torch
 import torchvision as tv
 
-import bit_pytorch.fewshot as fs
-import bit_pytorch.lbtoolbox as lb
-import bit_pytorch.models as models
+import siamese_unified.bit_pytorch.fewshot as fs
+import siamese_unified.bit_pytorch.lbtoolbox as lb
+import siamese_unified.bit_pytorch.models as models
 
-import bit_common
-import bit_hyperrule
+import siamese_unified.bit_common as bit_common
+import siamese_unified.bit_hyperrule as bit_hyperrule
+from tools.infer_rec import initialize_model
 
 from .dataloader import GetLoader
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="0, 1"
 
+
+# load paddleOCR model
+ocr_model, ocr_ops, ocr_post_process_class = initialize_model()
 
 def topk(output, target, ks=(1,)):
     """Returns one boolean vector for each k, whether the target is within the output's top-k."""
@@ -66,37 +69,44 @@ def mktrainval(args, logger):
             tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
 
-    if args.dataset == "cifar10":
-        train_set = tv.datasets.CIFAR10(args.datadir, transform=train_tx, train=True, download=True)
-        valid_set = tv.datasets.CIFAR10(args.datadir, transform=val_tx, train=False, download=True)
-    elif args.dataset == "cifar100":
-        train_set = tv.datasets.CIFAR100(args.datadir, transform=train_tx, train=True, download=True)
-        valid_set = tv.datasets.CIFAR100(args.datadir, transform=val_tx, train=False, download=True)
-    elif args.dataset == "imagenet2012":
-        train_set = tv.datasets.ImageFolder(pjoin(args.datadir, "train"), train_tx)
-        valid_set = tv.datasets.ImageFolder(pjoin(args.datadir, "val"), val_tx)
     # TODO: Define custom dataloading logic here for custom datasets
-    elif args.dataset == "logo_2k":
+    if args.dataset == "logo_2k":
         train_set = GetLoader(data_root='logo2k/Logo-2K+',
                                 data_list='logo2k/train.txt',
                                 label_dict='logo2k/logo2k_labeldict.pkl',
-                                transform=train_tx)
+                                transform=train_tx,
+                               ocr_model=ocr_model,
+                              ocr_ops=ocr_ops,
+                              ocr_post_class=ocr_post_process_class)
         
         valid_set = GetLoader(data_root='logo2k/Logo-2K+',
                               data_list='logo2k/test.txt',
                               label_dict='logo2k/logo2k_labeldict.pkl',
-                              transform=val_tx)
+                              transform=val_tx,
+                              ocr_model=ocr_model,
+                              ocr_ops=ocr_ops,
+                              ocr_post_class=ocr_post_process_class
+                              )
         
     elif args.dataset == "targetlist":
         train_set = GetLoader(data_root='../phishpedia/expand_targetlist',
                                             data_list='train_targets.txt',
                                             label_dict='target_dict.json',
-                                            transform=train_tx)
+                                            transform=train_tx,
+                                          ocr_model=ocr_model,
+                                          ocr_ops=ocr_ops,
+                                          ocr_post_class=ocr_post_process_class)
         
         valid_set = GetLoader(data_root='../phishpedia/expand_targetlist',
                               data_list='test_targets.txt',
                               label_dict='target_dict.json',
-                              transform=val_tx)
+                              transform=val_tx,
+                              ocr_model=ocr_model,
+                              ocr_ops=ocr_ops,
+                              ocr_post_class=ocr_post_process_class
+                              )
+    else:
+        raise NotImplementedError
 
     logger.info("Using a training set with {} images.".format(len(train_set)))
     logger.info("Using a validation set with {} images.".format(len(valid_set)))
@@ -106,24 +116,24 @@ def mktrainval(args, logger):
 
     valid_loader = torch.utils.data.DataLoader(
             valid_set, batch_size=micro_batch_size, shuffle=False,
-            num_workers=args.workers, pin_memory=True, drop_last=False)
+            num_workers=0)
 
     if micro_batch_size <= len(train_set):
         train_loader = torch.utils.data.DataLoader(
                 train_set, batch_size=micro_batch_size, shuffle=True,
-                num_workers=args.workers, pin_memory=True, drop_last=False)
+                num_workers=0)
     else:
         # In the few-shot cases, the total dataset size might be smaller than the batch-size.
         # In these cases, the default sampler doesn't repeat, so we need to make it do that
         # if we want to match the behaviour from the paper.
         train_loader = torch.utils.data.DataLoader(
-                train_set, batch_size=micro_batch_size, num_workers=args.workers, pin_memory=True,
+                train_set, batch_size=micro_batch_size, num_workers=0, pin_memory=True,
                 sampler=torch.utils.data.RandomSampler(train_set, replacement=True, num_samples=micro_batch_size))
 
     return train_set, valid_set, train_loader, valid_loader
 
 
-def run_eval(model, data_loader, device, chrono, logger, step):
+def run_eval(model, data_loader, device, logger, step):
     # switch to evaluate mode
     model.eval()
 
@@ -132,22 +142,18 @@ def run_eval(model, data_loader, device, chrono, logger, step):
 
     all_c, all_top1, all_top5 = [], [], []
     end = time.time()
-    for b, (x, y) in enumerate(data_loader):
+    for b, (x, y, ocr_emb) in enumerate(data_loader):
         with torch.no_grad():
             x = x.to(device, non_blocking=True)
+            ocr_emb = ocr_emb.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
 
-            # measure data loading time
-            chrono._done("eval load", time.time() - end)
-
-            # compute output, measure accuracy and record loss.
-            with chrono.measure("eval fprop"):
-                logits = model(x)
-                c = torch.nn.CrossEntropyLoss(reduction='none')(logits, y)
-                top1, top5 = topk(logits, y, ks=(1, 5))
-                all_c.extend(c.cpu())    # Also ensures a sync point.
-                all_top1.extend(top1.cpu())
-                all_top5.extend(top5.cpu())
+            logits = model(x, ocr_emb)
+            c = torch.nn.CrossEntropyLoss(reduction='none')(logits, y)
+            top1, top5 = topk(logits, y, ks=(1, 5))
+            all_c.extend(c.cpu())    # Also ensures a sync point.
+            all_top1.extend(top1.cpu())
+            all_top5.extend(top5.cpu())
 
         # measure elapsed time
         end = time.time()
@@ -189,10 +195,6 @@ def optimizer_to(optim, device):
 def main(args):
     logger = bit_common.setup_logger(args)
 
-    # Lets cuDNN benchmark conv implementations and choose the fastest.
-    # Only good if sizes stay the same within the main loop!
-    torch.backends.cudnn.benchmark = True
-
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     logger.info("Going to train on {}".format(device))
 
@@ -203,8 +205,7 @@ def main(args):
     model.load_from(np.load("{}.npz".format(args.model)))
 
     logger.info("Moving model onto all GPUs")
-    model = torch.nn.DataParallel(model)
-    
+
     # Note: no weight-decay!
     optim = torch.optim.SGD(model.parameters(), lr=args.base_lr, momentum=0.9)
     
@@ -243,25 +244,18 @@ def main(args):
     optim.zero_grad()
 
     model.train()
-    mixup = bit_hyperrule.get_mixup(len(train_set))
     cri = torch.nn.CrossEntropyLoss().to(device)
 
     logger.info("Starting training!")
-    chrono = lb.Chrono()
 
-    mixup_l = np.random.beta(mixup, mixup) if mixup > 0 else 1
     end = time.time()
 
-    with lb.Uninterrupt() as u:
-        for x, y in recycle(train_loader):
-            # measure data loading time, which is spent in the `for` statement.
-            chrono._done("load", time.time() - end)
-
-            if u.interrupted:
-                break
+    for j in range(200):
+        for _, (x, y, ocr_emb) in enumerate(train_loader):
 
             # Schedule sending to GPU(s)
             x = x.to(device, non_blocking=True)
+            ocr_emb = ocr_emb.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
 
             # Update learning-rate, including stop training if over.
@@ -271,21 +265,15 @@ def main(args):
             for param_group in optim.param_groups:
                 param_group["lr"] = lr
 
-            if mixup > 0.0:
-                x, y_a, y_b = mixup_data(x, y, mixup_l)
-
             # compute output
-            logits = model(x)
-            if mixup > 0.0:
-                c = mixup_criterion(cri, logits, y_a, y_b, mixup_l)
-            else:
-                c = cri(logits, y)
+            logits = model(x, ocr_emb)
+            c = cri(logits, y)
             c_num = float(c.data.cpu().numpy())    # Also ensures a sync point.
 
             # Accumulate grads
             (c / args.batch_split).backward()
 
-            logger.info("[step {}]: loss={:.5f} (lr={:.1e})".format(step, c_num, lr))    
+            logger.info("[step {}]: loss={:.5f} (lr={:.1e})".format(step, c_num, lr))
             logger.flush()
 
             # Update params
@@ -293,9 +281,6 @@ def main(args):
             optim.zero_grad()
             step += 1
 
-            # Sample new mixup ratio for next batch
-            mixup_l = np.random.beta(mixup, mixup) if mixup > 0 else 1
-            
             # Save model
             end = time.time()
             if step % 50 == 0:
@@ -305,21 +290,19 @@ def main(args):
                     "optim" : optim.state_dict(),
                 }, savename)
 
-        # Final eval at end of training.
-        run_eval(model, valid_loader, device, chrono, logger, step='end')
-        torch.save({
-            "step": step,
-            "model": model.state_dict(),
-            "optim" : optim.state_dict(),
-        }, savename)
+                run_eval(model, valid_loader, device, logger, step=step)
 
-
-    logger.info("Timings:\n{}".format(chrono))
+    # Final eval at end of training.
+    run_eval(model, valid_loader, device,  logger, step='end')
+    torch.save({
+        "step": step,
+        "model": model.state_dict(),
+        "optim" : optim.state_dict(),
+    }, savename)
 
 
 if __name__ == "__main__":
     parser = bit_common.argparser(models.KNOWN_MODELS.keys())
-    parser.add_argument("--workers", type=int, default=8,
-                                            help="Number of background threads used to load data.")
+    parser.add_argument("--workers", type=int, default=0, help="Number of background threads used to load data.")
     parser.add_argument("--no-save", dest="save", action="store_false")
     main(parser.parse_args())

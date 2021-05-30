@@ -79,3 +79,15 @@ class BaseModel(nn.Layer):
         else:
             x = self.head(x, data)
         return x
+
+    def forward_emb(self, x, data=None):
+        if self.use_transform:
+            x = self.transform(x)
+        x = self.backbone(x)
+        if self.use_neck:
+            x = self.neck(x)
+        if data is None:
+            x = self.head.forward_emb(x)
+        else:
+            x = self.head.forward_emb(x, data)
+        return x
