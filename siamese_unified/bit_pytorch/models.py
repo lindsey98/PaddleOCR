@@ -162,12 +162,13 @@ class ResNetV2(nn.Module):
     def forward(self, x, ocr_emb):
         x = self.head(self.body(self.root(x)))
         x = x.view(-1, 2048*self.wf)
-        print(x.shape)
         x = torch.cat((x, ocr_emb), dim=1)
-        print(x.shape)
         x = self.additionalfc(x)
-        assert x.shape[-2:] == (1, 1)    # We should have no spatial shape left.
-        return x[...,0,0]
+        print(x.shape)
+
+        return x
+        # assert x.shape[-2:] == (1, 1)    # We should have no spatial shape left.
+        # return x[...,0,0]
 
     def load_from(self, weights, prefix='resnet/'):
         with torch.no_grad():

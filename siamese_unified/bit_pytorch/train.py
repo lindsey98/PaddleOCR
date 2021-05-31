@@ -115,20 +115,11 @@ def mktrainval(args, logger):
     micro_batch_size = args.batch // args.batch_split
 
     valid_loader = torch.utils.data.DataLoader(
-            valid_set, batch_size=micro_batch_size, shuffle=False,
-            num_workers=0)
+            valid_set, batch_size=micro_batch_size, shuffle=False, num_workers=0)
 
-    if micro_batch_size <= len(train_set):
-        train_loader = torch.utils.data.DataLoader(
+    train_loader = torch.utils.data.DataLoader(
                 train_set, batch_size=micro_batch_size, shuffle=True,
                 num_workers=0)
-    else:
-        # In the few-shot cases, the total dataset size might be smaller than the batch-size.
-        # In these cases, the default sampler doesn't repeat, so we need to make it do that
-        # if we want to match the behaviour from the paper.
-        train_loader = torch.utils.data.DataLoader(
-                train_set, batch_size=micro_batch_size, num_workers=0, pin_memory=True,
-                sampler=torch.utils.data.RandomSampler(train_set, replacement=True, num_samples=micro_batch_size))
 
     return train_set, valid_set, train_loader, valid_loader
 
@@ -254,12 +245,13 @@ def main(args):
         for _, (x, y, ocr_emb) in enumerate(train_loader):
 
             # Schedule sending to GPU(s)
-            x = x.to(device, non_blocking=True)
-            ocr_emb = ocr_emb.to(device, non_blocking=True)
-            y = y.to(device, non_blocking=True)
+            x = x.to(device)
+            ocr_emb = ocr_emb.to(device)
+            y = y.to(device)
 
             # Update learning-rate, including stop training if over.
             lr = bit_hyperrule.get_lr(step, len(train_set), args.base_lr)
+            print('Learning rate: {:.5f}'.format(lr))
             if lr is None:
                 break
             for param_group in optim.param_groups:
@@ -268,10 +260,13 @@ def main(args):
             # compute output
             logits = model(x, ocr_emb)
             c = cri(logits, y)
-            c_num = float(c.data.cpu().numpy())    # Also ensures a sync point.
-
             # Accumulate grads
             (c / args.batch_split).backward()
+            # print(logits, c)
+
+            c_num = float(c.data.cpu().numpy())    # Also ensures a sync point.
+
+
 
             logger.info("[step {}]: loss={:.5f} (lr={:.1e})".format(step, c_num, lr))
             logger.flush()
@@ -282,7 +277,6 @@ def main(args):
             step += 1
 
             # Save model
-            end = time.time()
             if step % 50 == 0:
                 torch.save({
                     "step": step,
