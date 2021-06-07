@@ -33,6 +33,7 @@ from tools.infer_rec import initialize_model
 
 from .dataloader import GetLoader
 import os
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 
 # load paddleOCR model

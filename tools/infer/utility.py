@@ -29,7 +29,7 @@ def parse_args():
 
     parser = argparse.ArgumentParser()
     # params for prediction engine
-    parser.add_argument("--use_gpu", type=str2bool, default=True)
+    parser.add_argument("--use_gpu", type=str2bool, default=False)
     parser.add_argument("--ir_optim", type=str2bool, default=True)
     parser.add_argument("--use_tensorrt", type=str2bool, default=False)
     parser.add_argument("--use_fp16", type=str2bool, default=False)
@@ -64,7 +64,7 @@ def parse_args():
     parser.add_argument("--rec_model_dir", type=str)
     parser.add_argument("--rec_image_shape", type=str, default="3, 32, 320")
     parser.add_argument("--rec_char_type", type=str, default='ch')
-    parser.add_argument("--rec_batch_num", type=int, default=6)
+    parser.add_argument("--rec_batch_num", type=int, default=12) # increase rec_batch to speed up
     parser.add_argument("--max_text_length", type=int, default=25)
     parser.add_argument(
         "--rec_char_dict_path",
@@ -97,10 +97,10 @@ def parse_args():
     parser.add_argument("--cls_batch_num", type=int, default=6)
     parser.add_argument("--cls_thresh", type=float, default=0.9)
 
-    parser.add_argument("--enable_mkldnn", type=str2bool, default=False)
+    parser.add_argument("--enable_mkldnn", type=str2bool, default=False) # speed up cpu inference
     parser.add_argument("--use_pdserving", type=str2bool, default=False)
 
-    parser.add_argument("--use_mp", type=str2bool, default=False)
+    parser.add_argument("--use_mp", type=str2bool, default=False) # enable multiprocessing
     parser.add_argument("--total_process_num", type=int, default=1)
     parser.add_argument("--process_id", type=int, default=0)
 

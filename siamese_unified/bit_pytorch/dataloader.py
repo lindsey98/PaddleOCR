@@ -86,8 +86,7 @@ if __name__ == '__main__':
                           transform=train_tx,
                           ocr_model=ocr_model,
                           ocr_ops=ocr_ops,
-                          ocr_post_class=ocr_post_process_class
-                          )
+                          ocr_post_class=ocr_post_process_class)
 
     train_loader = torch.utils.data.DataLoader(
         train_set, batch_size=12, shuffle=False)
